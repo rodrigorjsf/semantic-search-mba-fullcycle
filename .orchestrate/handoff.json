@@ -1,6 +1,6 @@
 {
   "watchdog": {
-    "thresholdPercent": 40,
+    "thresholdPercent": 80,
     "contextWindowTokens": 200000
   },
   "successor": {

@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "tiers": {
+    "trivial": {
+      "investigator": null,
+      "implementer": {
+        "model": "haiku",
+        "variant": "standard"
+      },
+      "reviewer": {
+        "model": "sonnet",
+        "variant": "standard"
+      },
+      "conflict-resolver": {
+        "model": "sonnet",
+        "variant": "standard"
+      }
+    },
+    "standard": {
+      "investigator": {
+        "model": "haiku",
+        "variant": "standard"
+      },
+      "implementer": {
+        "model": "sonnet",
+        "variant": "standard"
+      },
+      "reviewer": {
+        "model": "opus",
+        "variant": "standard"
+      },
+      "conflict-resolver": {
+        "model": "opus",
+        "variant": "standard"
+      }
+    },
+    "complex": {
+      "investigator": {
+        "model": "opus",
+        "variant": "deep"
+      },
+      "implementer": {
+        "model": "opus",
+        "variant": "deep"
+      },
+      "reviewer": {
+        "model": "opus",
+        "variant": "deep"
+      },
+      "conflict-resolver": {
+        "model": "opus",
+        "variant": "deep"
+      }
+    }
+  },
+  "labels": {
+    "route:fable": {
+      "roles": [
+        "implementer"
+      ],
+      "set": {
+        "model": "fable",
+        "variant": "deep"
+      },
+      "fallback": {
+        "model": "opus",
+        "maxRetries": 1
+      }
+    }
+  },
+  "run": {
+    "intraWaveConcurrency": "parallel",
+    "continuationBudget": 2
+  }
+}

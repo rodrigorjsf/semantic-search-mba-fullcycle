@@ -1,0 +1,3 @@
+{
+  "tests": ["uv", "run", "--no-project", "--python", "3.12", "--with-requirements", "requirements.txt", "--with", "pytest", "pytest", "-q"]
+}

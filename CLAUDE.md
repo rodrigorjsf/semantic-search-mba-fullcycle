@@ -35,3 +35,5 @@ Postgraduate deliverable: docs are living, not write-once.
 When something fails repeatedly, when User has to re-explain, or when a workaround is found for a platform/tool limitation, add a one-line bullet here. Keep each bullet under 15 words. No explanations. Only add things that will save time in future sessions.
 
 - Agents fail silently on wrong paths. Always verify hardcoded paths.
+- Set git user.name/email via `--local`; the orchestrate MCP git seam ignores global `~/.gitconfig`.
+- Orchestrate `reverify-slice` false-fails on `not-configured` build; verify tests pass, then override.

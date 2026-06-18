@@ -10,7 +10,7 @@ stack best-practices live in [`docs/research/`](./research/).
 ## What we are building
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Ingestion["📥 Ingestion · one-shot · src/ingest.py"]
         PDF[document.pdf] e1@--> SPLIT["Split into Chunks<br/>1000 chars · 150 overlap"]
         SPLIT e2@--> EMB1["Embed each Chunk<br/>models/gemini-embedding-001"]

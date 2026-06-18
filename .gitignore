@@ -217,5 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 /.idea/
-.orchestrate/runs/
+
+# Project specific
+.orchestrate/
 .claude/

@@ -13,7 +13,7 @@ stack best-practices live in [`docs/research/`](./research/).
 flowchart LR
     subgraph Ingestion["📥 Ingestion · one-shot · src/ingest.py"]
         PDF[document.pdf] e1@--> SPLIT["Split into Chunks<br/>1000 chars · 150 overlap"]
-        SPLIT e2@--> EMB1["Embed each Chunk<br/>models/embedding-001"]
+        SPLIT e2@--> EMB1["Embed each Chunk<br/>models/gemini-embedding-001"]
         EMB1 e3@--> STORE[("pgVector<br/>Collection")]
     end
     subgraph Query["💬 Query · CLI loop · src/chat.py + src/search.py"]
@@ -62,15 +62,18 @@ flowchart LR
     p4@{ animate: true }
     p5@{ animate: true }
 
-    classDef todo fill:#334155,stroke:#94a3b8,color:#f8fafc;
-    class P0,P1,P2,P3,P4,P5 todo;
+    classDef done fill:#14532d,stroke:#22c55e,color:#f0fdf4;
+    class P0,P1,P2,P3,P4,P5 done;
 ```
 
-Status legend: ⬜ todo · 🟦 in progress · ✅ done. All phases are ⬜ today.
+Status legend: ⬜ todo · 🟦 in progress · ✅ done. **All phases are ✅ done** —
+the app is implemented, merged to `development`, and verified end-to-end against
+real Gemini + Postgres (ingestion, in-context retrieval, and the out-of-context
+fallback all confirmed).
 
 ---
 
-### ⬜ P0 — Environment & infra
+### ✅ P0 — Environment & infra
 
 The scaffold (docker-compose, requirements, `.env.example`, `document.pdf`, src
 stubs) is already in the repo. This phase makes it runnable.
@@ -91,13 +94,18 @@ stubs) is already in the repo. This phase makes it runnable.
 **Done when:** `docker compose ps` shows `postgres_rag` healthy, and a `psql`
 connection lists the `vector` extension.
 
-### ⬜ P1 — Ingestion (`src/ingest.py`)
+### ✅ P1 — Ingestion (`src/ingest.py`)
 
 - Load the Document with `PyPDFLoader(PDF_PATH)`.
 - Split with `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)`.
 - Embeddings: `GoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL,
-  output_dimensionality=768)` — `gemini-embedding-001` defaults to 3072 dims; 768
-  keeps the Collection lean and cosine distance makes normalization moot.
+  output_dimensionality=768)` — `gemini-embedding-001` defaults to 3072 dims.
+  The 768 intent (lean Collection, normalization moot under cosine) is **not
+  applied** by the pinned client, which honours `output_dimensionality` only as a
+  per-call argument; the live Collection is 3072-dim. See the README dimension note.
+- Embed in small batches with a pause + a 429 retry (`EMBED_BATCH_SIZE` /
+  `EMBED_BATCH_PAUSE` in `ingest.py`) so the Gemini **free tier** survives a
+  full-PDF ingest without hitting the per-minute rate limit.
 - Store with `PGVector(embeddings=…, collection_name=…, connection=DATABASE_URL,
   use_jsonb=True, pre_delete_collection=True)` — note `embeddings=` is plural &
   keyword-only. **Recreate the Collection each run** (`pre_delete_collection=True`)
@@ -106,7 +114,7 @@ connection lists the `vector` extension.
 **Done when:** `python src/ingest.py` populates the Collection (row count > 0),
 and running it a second time leaves the count unchanged.
 
-### ⬜ P2 — Search chain (`src/search.py`)
+### ✅ P2 — Search chain (`src/search.py`)
 
 - Implement `search_prompt()` to build and return a callable chain that, given a
   Question: embeds it → `similarity_search_with_score(question, k=10)` →
@@ -120,7 +128,7 @@ and running it a second time leaves the count unchanged.
 **Done when:** invoking the chain with a known-answer Question returns the fact,
 and with an out-of-context Question returns the exact Out-of-context fallback.
 
-### ⬜ P3 — CLI chat (`src/chat.py`)
+### ✅ P3 — CLI chat (`src/chat.py`)
 
 - Build the chain once via `search_prompt()`, then loop: print
   `Faça sua pergunta:`, read input, invoke the chain, print the Answer; repeat
@@ -129,7 +137,7 @@ and with an out-of-context Question returns the exact Out-of-context fallback.
 **Done when:** an interactive session reproduces the SPEC example — answers a
 known question and returns the fallback for an out-of-context one.
 
-### ⬜ P4 — README (living)
+### ✅ P4 — README (living)
 
 - Replace the README placeholder with real run instructions matching the SPEC
   "Ordem de Execução": venv → `.env` → `docker compose up -d` →
@@ -137,7 +145,7 @@ known question and returns the fallback for an out-of-context one.
 
 **Done when:** a fresh reader can run the project end-to-end from the README alone.
 
-### ⬜ P5 — Verify & deliver
+### ✅ P5 — Verify & deliver
 
 - Clean end-to-end run: `docker compose down -v` → `up -d` → ingest → chat,
   testing **both** a known-answer Question and an out-of-context Question.
@@ -160,15 +168,18 @@ known question and returns the fallback for an out-of-context one.
 
 ## Risks to confirm at runtime
 
-Mostly resolved by [stack research](./research/); what remains is access
-confirmation against the live key:
+All resolved — research-confirmed up front, then verified against the live key
+on the end-to-end run:
 
 - ✅ **`models/embedding-001` is retired** (shutdown 2025-10-30, research-confirmed)
   — already switched to `models/gemini-embedding-001` across `.env.example`, P0/P1,
   and ADR-0001. See the [Gemini brief](./research/gemini-langchain-google-genai.md).
-- **`gemini-2.5-flash-lite` access** depends on the API key's tier/region (the model
-  itself is valid until its 2026-10-16 shutdown). Confirm the key can call both the
-  embedding and chat models before blaming the code.
+- ✅ **`gemini-2.5-flash-lite` + `gemini-embedding-001` access** — confirmed
+  against a live **free-tier** key: ingestion, in-context retrieval, and the
+  out-of-context fallback all run end-to-end.
+- ✅ **Free-tier rate limit** — the one real runtime constraint found: a full-PDF
+  embedding burst 429s, mitigated by the batch+pause+retry throttle in `ingest.py`
+  (see README step 4). A paid tier raises the ceiling.
 
 ## Deferred / minor
 

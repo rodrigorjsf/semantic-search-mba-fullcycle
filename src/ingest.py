@@ -15,6 +15,8 @@ the unit tests stay hermetic.
 imported modules such as config.py or search.py.
 """
 
+import time
+
 from dotenv import load_dotenv
 
 from config import req
@@ -25,6 +27,36 @@ CHUNK_OVERLAP = 150
 
 # Gemini embedding model + dimensionality (see docs/adr/0001).
 EMBEDDING_DIMENSIONS = 768
+
+# Free-tier throttling: the Gemini embeddings API 429s on a large burst, so
+# embed Chunks in small batches with a short pause between them. See the
+# implement-rag-app skill's "Rate limits" note and docs/research.
+EMBED_BATCH_SIZE = 5
+EMBED_BATCH_PAUSE = 2.0
+
+# A 429 on a batch is transient (the per-minute window) — wait this long for
+# the window to clear, then retry the batch, up to this many times.
+RATE_LIMIT_BACKOFF = 65.0
+RATE_LIMIT_MAX_RETRIES = 4
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    # ponytail: match the 429 substring; the google client wraps it in a
+    # generic error rather than a typed one. Tighten to a typed exception if
+    # the client ever exposes one.
+    return "429" in str(exc)
+
+
+def _add_batch_with_retry(store, batch, sleep):
+    """add_documents(batch), retrying on a rate-limit 429 with a backoff."""
+    for attempt in range(RATE_LIMIT_MAX_RETRIES):
+        try:
+            store.add_documents(batch)
+            return
+        except Exception as exc:
+            if not _is_rate_limit(exc) or attempt == RATE_LIMIT_MAX_RETRIES - 1:
+                raise
+            sleep(RATE_LIMIT_BACKOFF)
 
 
 def split_into_chunks(documents):
@@ -82,7 +114,9 @@ def _default_store_factory(embeddings):
     )
 
 
-def ingest(*, pdf_path=None, documents=None, embeddings=None, store_factory=None):
+def ingest(
+    *, pdf_path=None, documents=None, embeddings=None, store_factory=None, sleep=time.sleep
+):
     """Run the ingestion pipeline and return the number of Chunks stored.
 
     Args:
@@ -93,6 +127,8 @@ def ingest(*, pdf_path=None, documents=None, embeddings=None, store_factory=None
         store_factory: callable ``embeddings -> store`` constructing a fresh
             vector store (clean rebuild). Defaults to the real PGVector
             factory.
+        sleep: callable ``seconds -> None`` used to pause between embedding
+            batches. Injectable so unit tests do not sleep for real.
 
     Required settings are read via ``config.req`` first, so a missing one
     raises ``SystemExit`` (fail-fast) before any loading or store build.
@@ -115,7 +151,15 @@ def ingest(*, pdf_path=None, documents=None, embeddings=None, store_factory=None
 
     # Construct the store fresh each run → clean rebuild, no duplicate Chunks.
     store = store_factory(embeddings)
-    store.add_documents(chunks)
+
+    # Embed in small batches with a pause between them: a single large burst
+    # 429s on the Gemini free tier (the per-minute limit), while spacing the
+    # batches keeps each request inside the window.
+    for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+        batch = chunks[start : start + EMBED_BATCH_SIZE]
+        _add_batch_with_retry(store, batch, sleep)
+        if start + EMBED_BATCH_SIZE < len(chunks):
+            sleep(EMBED_BATCH_PAUSE)
 
     count = len(chunks)
     print(f"Stored {count} chunks in the collection.")

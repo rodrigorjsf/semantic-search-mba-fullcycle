@@ -158,6 +158,94 @@ class TestIngest:
         assert "PDF_PATH" in str(exc_info.value)
 
 
+class RecordingStore:
+    """Fake store that records each add_documents() batch it receives."""
+
+    def __init__(self):
+        self.batches: list = []
+
+    def add_documents(self, docs):
+        self.batches.append(list(docs))
+        return [str(i) for i in range(len(docs))]
+
+
+class TestThrottledIngest:
+    """ingest() throttles embedding bursts to survive free-tier rate limits."""
+
+    def test_adds_documents_in_subbatches_no_larger_than_batch_size(self, monkeypatch):
+        # Free tier 429s on a large embedding burst, so ingest() must split
+        # the chunks into batches no larger than EMBED_BATCH_SIZE instead of
+        # one giant add_documents() call. Goes red on the single-call code.
+        import ingest as ingest_mod
+
+        monkeypatch.setattr(ingest_mod, "EMBED_BATCH_SIZE", 2)
+        store = RecordingStore()
+        docs = [Document(page_content=f"chunk number {i}") for i in range(5)]
+
+        ingest_mod.ingest(
+            documents=docs,
+            embeddings=object(),
+            store_factory=lambda emb: store,
+            sleep=lambda seconds: None,
+        )
+
+        assert sum(len(b) for b in store.batches) == 5  # nothing dropped
+        assert all(len(b) <= 2 for b in store.batches)  # each burst is small
+        assert len(store.batches) == 3  # [2, 2, 1]
+
+    def test_pauses_between_batches_but_not_after_the_last(self, monkeypatch):
+        # Spacing the batches is the whole point — assert a pause happens
+        # between consecutive batches and not after the final one.
+        import ingest as ingest_mod
+
+        monkeypatch.setattr(ingest_mod, "EMBED_BATCH_SIZE", 2)
+        pauses: list = []
+        docs = [Document(page_content=f"chunk number {i}") for i in range(5)]
+
+        ingest_mod.ingest(
+            documents=docs,
+            embeddings=object(),
+            store_factory=lambda emb: RecordingStore(),
+            sleep=lambda seconds: pauses.append(seconds),
+        )
+
+        assert len(pauses) == 2  # 3 batches → 2 inter-batch pauses
+
+    def test_retries_a_batch_on_a_rate_limit_error(self, monkeypatch):
+        # A 429 on a batch is transient (per-minute window) — back off and
+        # retry rather than failing the whole ingest. Red on no-retry code.
+        import ingest as ingest_mod
+
+        monkeypatch.setattr(ingest_mod, "EMBED_BATCH_SIZE", 10)  # single batch
+        monkeypatch.setattr(ingest_mod, "RATE_LIMIT_BACKOFF", 0.0)
+
+        class FlakyStore:
+            def __init__(self):
+                self.calls = 0
+                self.stored: list = []
+
+            def add_documents(self, docs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("429 You exceeded your current quota")
+                self.stored.extend(docs)
+                return [str(i) for i in range(len(docs))]
+
+        store = FlakyStore()
+        docs = [Document(page_content=f"chunk number {i}") for i in range(3)]
+
+        result = ingest_mod.ingest(
+            documents=docs,
+            embeddings=object(),
+            store_factory=lambda emb: store,
+            sleep=lambda seconds: None,
+        )
+
+        assert result == 3
+        assert len(store.stored) == 3
+        assert store.calls == 2  # failed once, retried, then succeeded
+
+
 @pytest.mark.skipif(
     not os.getenv("DATABASE_URL") or not os.getenv("GOOGLE_API_KEY"),
     reason="requires a database and a real Gemini API key",

@@ -45,6 +45,12 @@ flowchart TB
     class ANS answer;
 ```
 
+## Run Example
+
+<p align="center">
+  <img src="docs/chat-execution-example.png" alt="Texto alternativo" width="600px" />
+</p>
+
 ## Prerequisites
 
 - **Python 3.11 or 3.12** for the classic-virtualenv path. The pinned
